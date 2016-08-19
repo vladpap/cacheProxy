@@ -1,5 +1,7 @@
 *.log
 *.class
+*.cache
+*.zip
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
 logs/

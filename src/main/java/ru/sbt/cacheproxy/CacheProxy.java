@@ -1,7 +1,7 @@
 package ru.sbt.cacheproxy;
 
 
-import java.io.Serializable;
+import java.io.*;
 import java.lang.annotation.*;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -16,7 +16,9 @@ import static ru.sbt.cacheproxy.CacheType.IN_MEMORY;
 public class CacheProxy<T extends Serializable> implements InvocationHandler {
 
     private final Object delegate;
-    private final Map<Object, Object> resultByArg;
+    private final CacheProxyMap<Object, Object> resultByArg;
+    private String directoryToSaveFile = "./";
+    private final String extensionFile = ".cache";
 
 
     @Target(value = ElementType.METHOD)
@@ -25,11 +27,13 @@ public class CacheProxy<T extends Serializable> implements InvocationHandler {
     public @interface Cache {
         CacheType cacheType() default IN_MEMORY;
 
-        String fileNamePrefix();
+        String fileNamePrefix() default "";
 
-        boolean zip() default true;
+        boolean zip() default false;
 
         Class<?>[] identityBy() default {};
+
+        int maxListList() default 100_000;
     }
 
 
@@ -40,7 +44,15 @@ public class CacheProxy<T extends Serializable> implements InvocationHandler {
 
     private CacheProxy(Object object) {
         this.delegate = object;
-        this.resultByArg = new HashMap<>();
+        this.resultByArg = new CacheProxyMap<>();
+    }
+
+    public void setDirectoryToSaveFile(String directoryToSaveFile) {
+        if (delegate == null) {
+            this.directoryToSaveFile = directoryToSaveFile;
+        } else {
+            throw new RuntimeException("No set directory to save file after call method cache");
+        }
     }
 
     public T cache(T object) {
@@ -80,35 +92,104 @@ public class CacheProxy<T extends Serializable> implements InvocationHandler {
         Method delegateMethod = delegate.getClass().getMethod(method.getName(), method.getParameterTypes());
         Object[] argsKey;
         if (!delegateMethod.isAnnotationPresent(Cache.class)) {
-
             return invoke(delegateMethod, args);
-        } else {
-            Cache cache = delegateMethod.getAnnotation(Cache.class);
-            List<Class<?>> identityByClass = Arrays.asList(cache.identityBy());
-            if (identityByClass.size() != 0) {
-                List<Object> list = new ArrayList<>();
-                for (Object arg : args) {
-                    if (identityByClass.contains(arg.getClass())) {
-                        list.add(arg);
-                    }
+        }
+        Cache cache = delegateMethod.getAnnotation(Cache.class);
+        List<Class<?>> identityByClass = Arrays.asList(cache.identityBy());
+        if (identityByClass.size() != 0) {
+            List<Object> list = new ArrayList<>();
+            for (Object arg : args) {
+                if (identityByClass.contains(arg.getClass())) {
+                    list.add(arg);
                 }
-                argsKey = new Object[list.size()];
-                argsKey = list.toArray();
-            } else {
-                argsKey = args;
             }
-            if (!resultByArg.containsKey(key(delegateMethod, argsKey))) {
-                Object result = invoke(delegateMethod, args);
-                resultByArg.put(key(delegateMethod, argsKey), result);
+            argsKey = list.toArray();
+        } else {
+            argsKey = args;
+        }
+        String fileName = (cache.fileNamePrefix().length() == 0) ? delegateMethod.getName() : cache.fileNamePrefix();
+
+        if (cache.cacheType().equals(CacheType.IN_FILE)) {
+            readFile(fileName, cache.zip());
+        }
+
+        if (!resultByArg.containsKey(key(delegateMethod, argsKey))) {
+            Object result = invoke(delegateMethod, args);
+            if (result instanceof List<?>) {
+                List list = (List) result;
+                result = list.subList(0, cache.maxListList());
+            }
+            resultByArg.put(key(delegateMethod, argsKey), result);
+            if (cache.cacheType().equals(CacheType.IN_FILE)) {
+                saveFile(fileName, cache.zip());
             }
         }
+
         return resultByArg.get(key(delegateMethod, argsKey));
     }
 
+    private void saveFile(String fileName, boolean zip) {
+
+        if (zip) {
+
+        } else {
+            File file = new File(directoryToSaveFile + fileName + extensionFile);
+            FileOutputStream fileOutputStream = null; //-=-=-==-=-
+            try {
+                fileOutputStream = new FileOutputStream(file);
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            }
+            ObjectOutputStream objectOutputStream = null; // -=-=-=-==-=
+            try {
+                objectOutputStream = new ObjectOutputStream(fileOutputStream);
+                objectOutputStream.writeObject(resultByArg);
+                objectOutputStream.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+        }
+    }
+
+    private void readFile(String fileName, boolean zip) {
+
+        if (zip) {
+
+        } else {
+            File file = new File(directoryToSaveFile + fileName + extensionFile);
+            FileInputStream fileInputStream = null;
+            try {
+                fileInputStream = new FileInputStream(file);
+            } catch (FileNotFoundException e) {
+                return;
+            }
+            ObjectInputStream objectInputStream = null;
+            CacheProxyMap<Object, Object> fileObj = null;
+            try {
+                objectInputStream = new ObjectInputStream(fileInputStream);
+                fileObj = (CacheProxyMap<Object, Object>) objectInputStream.readObject();
+                objectInputStream.close();
+            } catch (IOException e) {
+                throw new RuntimeException("Object input stream exception file name :" + file.toString());
+            } catch (ClassNotFoundException e) {
+                throw new RuntimeException("Class not found exception from read object in file name :" + file.toString());
+            }
+
+            for (Map.Entry<Object, Object> entry : fileObj.entrySet()) {
+                resultByArg.put(entry.getKey(), entry.getValue());
+            }
+
+        }
+
+    }
+
     private Object key(Method method, Object[] args) {
-        List<Object> key = new ArrayList<>();
-        key.add(method);
-        key.addAll(asList(args));
+
+        String key = method.getName();
+        for (Object arg : args) {
+            key += arg.toString();
+        }
         return key;
     }
 
