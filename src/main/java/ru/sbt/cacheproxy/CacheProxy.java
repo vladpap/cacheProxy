@@ -9,19 +9,15 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.*;
-import java.util.zip.*;
 
 import static java.lang.ClassLoader.getSystemClassLoader;
 
 public class CacheProxy implements InvocationHandler {
 
     private Object delegate;
-    private final CacheProxyMap<Object, Object> resultByArg;
+    private final Map<Object, Object> resultByArg;
     private final String directoryToSaveFile;
-    private static final String EXTENSION_FILE = ".cache";
     private static final String DEFAULT_DIRECTORY = "./cache_directory/";
 
 
@@ -39,7 +35,7 @@ public class CacheProxy implements InvocationHandler {
 
     private CacheProxy(Object object, String dir) {
         this.delegate = object;
-        this.resultByArg = new CacheProxyMap<>();
+        this.resultByArg = new HashMap<>();
         this.directoryToSaveFile = dir;
     }
 
@@ -69,7 +65,49 @@ public class CacheProxy implements InvocationHandler {
         }
         Cache cache = delegateMethod.getAnnotation(Cache.class);
 
-        List<Class> identityByClass = Arrays.asList(cache.identityBy());
+        argsKey = getArgumentsByIndentityInMethod(args, Arrays.asList(cache.identityBy()));
+
+        String fileName = (cache.fileNamePrefix() + delegateMethod.getName() + key(delegateMethod, argsKey));
+
+        Object result;
+        if (cache.cacheType().equals(CacheType.IN_FILE)) {
+            result = getResultCacheFromFile(args, delegateMethod, cache, fileName);
+        } else {
+            result = getResultCacheFromMemory(args, delegateMethod, argsKey, cache);
+        }
+        return result;
+    }
+
+    private Object getResultCacheFromMemory(Object[] args, Method delegateMethod, Object[] argsKey, Cache cache) throws Throwable {
+        Object result;
+        if (!resultByArg.containsKey(key(delegateMethod, argsKey))) {
+            result = invoke(delegateMethod, args);
+            result = getObjectAndCheckInstanceList(cache, result);
+            resultByArg.put(key(delegateMethod, argsKey), result);
+        } else {
+            result = resultByArg.get(key(delegateMethod, argsKey));
+        }
+        return result;
+    }
+
+    private Object getResultCacheFromFile(Object[] args, Method delegateMethod, Cache cache, String fileName) throws Throwable {
+        FilesForCache filesForCache = new FilesForCache(directoryToSaveFile);
+        Object result;
+        try {
+            result = filesForCache.readFile(fileName, cache.zip());
+            if (result == null) {
+                throw new FileNotFoundException();
+            }
+        } catch (FileNotFoundException e) {
+            result = invoke(delegateMethod, args);
+            result = getObjectAndCheckInstanceList(cache, result);
+            filesForCache.saveFile(result, fileName, cache.zip());
+        }
+        return result;
+    }
+
+    private Object[] getArgumentsByIndentityInMethod(Object[] args, List<Class> identityByClass) {
+        Object[] argsKey;
         if (identityByClass.size() != 0) {
             List<Object> list = new ArrayList<>();
             for (Object arg : args) {
@@ -81,32 +119,7 @@ public class CacheProxy implements InvocationHandler {
         } else {
             argsKey = args;
         }
-
-        String fileName = (cache.fileNamePrefix() + delegateMethod.getName() + key(delegateMethod, argsKey)).replace(".", "_");
-
-        Object result;
-        if (cache.cacheType().equals(CacheType.IN_FILE)) {
-            try {
-                result = readFile(fileName, cache.zip());
-                if (result == null) {
-                    throw new FileNotFoundException();
-                }
-            } catch (FileNotFoundException e) {
-                result = invoke(delegateMethod, args);
-                result = getObjectAndCheckInstanceList(cache, result);
-                saveFile(result, fileName, cache.zip());
-            }
-        } else {
-            if (!resultByArg.containsKey(key(delegateMethod, argsKey))) {
-                result = invoke(delegateMethod, args);
-                result = getObjectAndCheckInstanceList(cache, result);
-                resultByArg.put(key(delegateMethod, argsKey), result);
-            } else {
-                result = resultByArg.get(key(delegateMethod, argsKey));
-            }
-        }
-
-        return result;
+        return argsKey;
     }
 
     private Object getObjectAndCheckInstanceList(Cache cache, Object result) {
@@ -114,176 +127,9 @@ public class CacheProxy implements InvocationHandler {
         return result;
     }
 
-    private void saveFile(Object object, String fileName, boolean zip) {
-
-        entryDirectoy();
-
-        if (zip) {
-
-            File f = new File(directoryToSaveFile + fileName + ".zip");
-            ZipOutputStream out = null;
-            try {
-                out = new ZipOutputStream(new FileOutputStream(f));
-                ZipEntry entry = new ZipEntry(fileName + EXTENSION_FILE);
-                out.putNextEntry(entry);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-
-            byte[] data = new byte[0];
-            try {
-                data = converToByte(object);
-            } catch (IOException e) {
-                throw new RuntimeException("Exception conver Object to byte[]", e);
-            }
-            try {
-                out.write(data, 0, data.length);
-                out.closeEntry();
-
-                out.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-
-        } else {
-
-            File file = new File(directoryToSaveFile + fileName + EXTENSION_FILE);
-            FileOutputStream fileOutputStream;
-            try {
-                fileOutputStream = new FileOutputStream(file);
-                ObjectOutputStream objectOutputStream = new ObjectOutputStream(fileOutputStream);
-                objectOutputStream.writeObject(object);
-                objectOutputStream.close();
-            } catch (FileNotFoundException e) {
-                e.printStackTrace(); // TODO: 21.08.16
-            } catch (IOException e) {
-                e.printStackTrace(); // TODO: 21.08.16
-            }
-
-        }
-    }
-
-    private byte[] converToByte(Object object) throws IOException {
-        try (ByteArrayOutputStream bos = new ByteArrayOutputStream();
-             ObjectOutput output = new ObjectOutputStream(bos)) {
-            output.writeObject(object);
-            return bos.toByteArray();
-        }
-    }
-
-    private Object convertFromBytes(byte[] bytes) throws IOException, ClassNotFoundException {
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
-             ObjectInput input = new ObjectInputStream(bis)) {
-            return input.readObject();
-        }
-    }
-
-    private void entryDirectoy() {
-        if (!Files.isDirectory(Paths.get(directoryToSaveFile))) {
-            try {
-                new File(directoryToSaveFile).mkdir();
-            } catch (Exception e) {
-                new RuntimeException("Error create directory : " + directoryToSaveFile, e);
-            }
-        }
-    }
-
-    private Object readFile(String fileName, boolean zip) throws IOException {
-
-        if (zip) {
-            ZipFile zipFile = null;
-            try {
-                zipFile = new ZipFile(directoryToSaveFile + fileName + ".zip");
-            } catch (IOException e) {
-                throw new FileNotFoundException();
-            }
-
-            try {
-                final Enumeration<? extends ZipEntry> entries = zipFile.entries();
-                while (entries.hasMoreElements()) {
-                    final ZipEntry entry = entries.nextElement();
-                    extractEntry(entry, zipFile.getInputStream(entry));
-                }
-            } catch (IOException e) {
-                e.printStackTrace();   // TODO: 22.08.16  
-            } finally {
-                try {
-                    zipFile.close();
-                } catch (IOException e) {
-                    e.printStackTrace(); // TODO: 22.08.16
-                }
-            }
-
-
-            Object result = readFileNotZipArchive(fileName);
-            deleteFile(fileName);
-            return result;
-
-        } else {
-            return readFileNotZipArchive(fileName);
-        }
-
-    }
-
-    private void deleteFile(String fileName) {
-        try {
-            Files.delete(Paths.get(directoryToSaveFile + fileName + EXTENSION_FILE));
-        } catch (IOException e) {
-            e.printStackTrace(); // TODO: 22.08.16
-        }
-    }
-
-    private Object readFileNotZipArchive(String fileName) throws FileNotFoundException {
-        File file = new File(directoryToSaveFile + fileName + EXTENSION_FILE);
-        FileInputStream fileInputStream;
-        try {
-            fileInputStream = new FileInputStream(file);
-        } catch (FileNotFoundException e) {
-            throw new FileNotFoundException();
-        }
-        ObjectInputStream objectInputStream;
-        Object fileObj;
-        try {
-            objectInputStream = new ObjectInputStream(fileInputStream);
-            fileObj = (Object) objectInputStream.readObject();
-            objectInputStream.close();
-        } catch (IOException e) {
-            throw new RuntimeException("Object input stream exception file name :" + file.toString());
-        } catch (ClassNotFoundException e) {
-            throw new RuntimeException("Class not found exception from read object in file name :" + file.toString());
-        }
-
-        return fileObj;
-    }
-
-    private void extractEntry(final ZipEntry entry, InputStream is) throws IOException {
-        String exractedFile = directoryToSaveFile + entry.getName();
-        FileOutputStream fos = null;
-
-        try {
-            fos = new FileOutputStream(exractedFile);
-            final byte[] buf = new byte[2048];
-            int read = 0;
-            int length;
-
-            while ((length = is.read(buf, 0, buf.length)) >= 0) {
-                fos.write(buf, 0, length);
-            }
-
-        } catch (IOException ioex) {
-            fos.close();
-        }
-
-    }
-
 
     private String key(Method method, Object[] args) {
-
-        String key = method.getName();
-        for (Object arg : args) {
-            key += arg.toString();
-        }
-        return key;
+        return (method.getName() + Arrays.toString(args)).replace(",", "").replace(".", "_").replaceAll("\\s", "");
     }
 
     private Object invoke(Method method, Object[] args) throws Throwable {
