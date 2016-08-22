@@ -9,13 +9,10 @@ import ru.sbt.service.UtilsImpl;
 
 public class Main {
     public static void main(String[] args) {
-        CacheProxy<Service> cacheProxy = new CacheProxy<>("");
+        CacheProxy cacheProxy = new CacheProxy();
         Service service = cacheProxy.cache(new ServiceImpl());
+        Utils utils = cacheProxy.cache(new UtilsImpl());
 
-        CacheProxy<Utils> utilsCacheProxy = new CacheProxy<>("");
-        Utils utils = utilsCacheProxy.cache(new UtilsImpl());
-
-        Object result;
         long start = System.currentTimeMillis();
         System.out.println(service.doHardWork("45", 34));
         System.out.println(service.doHardWork("45", 27));

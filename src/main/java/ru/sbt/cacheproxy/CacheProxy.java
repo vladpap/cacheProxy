@@ -16,16 +16,23 @@ import java.util.zip.*;
 
 import static java.lang.ClassLoader.getSystemClassLoader;
 
-public class CacheProxy<T extends Serializable> implements InvocationHandler {
+public class CacheProxy implements InvocationHandler {
 
     private Object delegate;
     private final CacheProxyMap<Object, Object> resultByArg;
     private final String directoryToSaveFile;
-    private final String extensionFile = ".cache";
+    private static final String EXTENSION_FILE = ".cache";
+    private static final String DEFAULT_DIRECTORY = "./cache_directory/";
 
+
+    public CacheProxy() {
+        this.directoryToSaveFile = DEFAULT_DIRECTORY;
+        this.delegate = null;
+        this.resultByArg = null;
+    }
 
     public CacheProxy(String dirToSaveFile) {
-        this.directoryToSaveFile = ((dirToSaveFile == null) || (dirToSaveFile.length() == 0)) ? "./cache_directory/" : dirToSaveFile;
+        this.directoryToSaveFile = ((dirToSaveFile == null) || (dirToSaveFile.length() == 0)) ? DEFAULT_DIRECTORY : dirToSaveFile;
         this.delegate = null;
         this.resultByArg = null;
     }
@@ -37,7 +44,7 @@ public class CacheProxy<T extends Serializable> implements InvocationHandler {
     }
 
 
-    public T cache(T object) {
+    public<T extends Serializable> T cache(T object) {
         Method[] methods = object.getClass().getMethods();
 
         for (Method method : methods) {
@@ -45,7 +52,7 @@ public class CacheProxy<T extends Serializable> implements InvocationHandler {
                 this.delegate = object;
                 Object o = Proxy.newProxyInstance(getSystemClassLoader(),
                         object.getClass().getInterfaces(),
-                        new CacheProxy<T>(object, directoryToSaveFile));
+                        new CacheProxy(object, directoryToSaveFile));
                 return (T) o;
             }
         }
@@ -117,7 +124,7 @@ public class CacheProxy<T extends Serializable> implements InvocationHandler {
             ZipOutputStream out = null;
             try {
                 out = new ZipOutputStream(new FileOutputStream(f));
-                ZipEntry entry = new ZipEntry(fileName + extensionFile);
+                ZipEntry entry = new ZipEntry(fileName + EXTENSION_FILE);
                 out.putNextEntry(entry);
             } catch (IOException e) {
                 e.printStackTrace();
@@ -140,7 +147,7 @@ public class CacheProxy<T extends Serializable> implements InvocationHandler {
 
         } else {
 
-            File file = new File(directoryToSaveFile + fileName + extensionFile);
+            File file = new File(directoryToSaveFile + fileName + EXTENSION_FILE);
             FileOutputStream fileOutputStream;
             try {
                 fileOutputStream = new FileOutputStream(file);
@@ -220,14 +227,14 @@ public class CacheProxy<T extends Serializable> implements InvocationHandler {
 
     private void deleteFile(String fileName) {
         try {
-            Files.delete(Paths.get(directoryToSaveFile + fileName + extensionFile));
+            Files.delete(Paths.get(directoryToSaveFile + fileName + EXTENSION_FILE));
         } catch (IOException e) {
             e.printStackTrace(); // TODO: 22.08.16
         }
     }
 
     private Object readFileNotZipArchive(String fileName) throws FileNotFoundException {
-        File file = new File(directoryToSaveFile + fileName + extensionFile);
+        File file = new File(directoryToSaveFile + fileName + EXTENSION_FILE);
         FileInputStream fileInputStream;
         try {
             fileInputStream = new FileInputStream(file);
