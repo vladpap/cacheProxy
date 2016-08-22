@@ -1,9 +1,6 @@
 package ru.sbt.service;
 
-import ru.sbt.cacheproxy.CacheProxy.Cache;
-import ru.sbt.cacheproxy.CacheType;
-
-import static ru.sbt.cacheproxy.CacheType.IN_FILE;
+import ru.sbt.annotations.Cache;
 
 public class UtilsImpl implements Utils {
 

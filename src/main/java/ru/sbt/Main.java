@@ -6,14 +6,17 @@ import ru.sbt.service.Service;
 import ru.sbt.service.Utils;
 import ru.sbt.service.UtilsImpl;
 
+
 public class Main {
     public static void main(String[] args) {
-        CacheProxy<Service> cacheProxy = new CacheProxy<>();
+        CacheProxy<Service> cacheProxy = new CacheProxy<>("");
         Service service = cacheProxy.cache(new ServiceImpl());
 
-        CacheProxy<Utils> utilsCacheProxy = new CacheProxy<>();
+        CacheProxy<Utils> utilsCacheProxy = new CacheProxy<>("");
         Utils utils = utilsCacheProxy.cache(new UtilsImpl());
 
+        Object result;
+        long start = System.currentTimeMillis();
         System.out.println(service.doHardWork("45", 34));
         System.out.println(service.doHardWork("45", 27));
         System.out.println(service.doWorkEasy("doWorkEasy"));
@@ -27,5 +30,7 @@ public class Main {
         System.out.println(service.work("Hello").size());
         System.out.println(utils.doWorker("dfsdf", 5));
         System.out.println(utils.doWorker("dfsdf", 5));
+        System.out.println("-----------------------------------");
+        System.out.println("Total time : " + ((System.currentTimeMillis() - start) / 1_000) + " sec.");
     }
 }

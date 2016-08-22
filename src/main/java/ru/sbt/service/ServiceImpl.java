@@ -1,13 +1,11 @@
 package ru.sbt.service;
 
 
-import ru.sbt.cacheproxy.CacheProxy.Cache;
-
-import java.io.Serializable;
+import ru.sbt.annotations.Cache;
 import java.util.ArrayList;
 import java.util.List;
 
-import static ru.sbt.cacheproxy.CacheType.IN_FILE;
+import static ru.sbt.annotations.CacheType.IN_FILE;
 
 public class ServiceImpl implements Service {
 
@@ -26,7 +24,7 @@ public class ServiceImpl implements Service {
     }
 
     @Override
-    @Cache(cacheType = IN_FILE)
+    @Cache(cacheType = IN_FILE, zip = true)
     public String doWorkEasy(String work) {
         try {
             Thread.sleep(2000);
@@ -38,6 +36,11 @@ public class ServiceImpl implements Service {
 
     @Override
     public String doDo() {
+        try {
+            Thread.sleep(2000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
         return "DoDo";
     }
 

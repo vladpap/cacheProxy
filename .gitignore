@@ -1,5 +1,6 @@
 *.log
 *.class
+cache_directory/
 *.cache
 *.zip
 *.jar

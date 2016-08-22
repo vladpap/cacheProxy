@@ -1,85 +1,51 @@
 package ru.sbt.cacheproxy;
 
 
+import ru.sbt.annotations.Cache;
+import ru.sbt.annotations.CacheType;
+
 import java.io.*;
-import java.lang.annotation.*;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
+import java.util.zip.*;
 
 import static java.lang.ClassLoader.getSystemClassLoader;
-import static java.util.Arrays.asList;
-import static ru.sbt.cacheproxy.CacheType.IN_MEMORY;
 
 public class CacheProxy<T extends Serializable> implements InvocationHandler {
 
-    private final Object delegate;
+    private Object delegate;
     private final CacheProxyMap<Object, Object> resultByArg;
-    private String directoryToSaveFile = "./";
+    private final String directoryToSaveFile;
     private final String extensionFile = ".cache";
 
 
-    @Target(value = ElementType.METHOD)
-    @Retention(value = RetentionPolicy.RUNTIME)
-    @Documented
-    public @interface Cache {
-        CacheType cacheType() default IN_MEMORY;
-
-        String fileNamePrefix() default "";
-
-        boolean zip() default false;
-
-        Class<?>[] identityBy() default {};
-
-        int maxListList() default 100_000;
-    }
-
-
-    public CacheProxy() {
+    public CacheProxy(String dirToSaveFile) {
+        this.directoryToSaveFile = ((dirToSaveFile == null) || (dirToSaveFile.length() == 0)) ? "./cache_directory/" : dirToSaveFile;
         this.delegate = null;
         this.resultByArg = null;
     }
 
-    private CacheProxy(Object object) {
+    private CacheProxy(Object object, String dir) {
         this.delegate = object;
         this.resultByArg = new CacheProxyMap<>();
+        this.directoryToSaveFile = dir;
     }
 
-    public void setDirectoryToSaveFile(String directoryToSaveFile) {
-        if (delegate == null) {
-            this.directoryToSaveFile = directoryToSaveFile;
-        } else {
-            throw new RuntimeException("No set directory to save file after call method cache");
-        }
-    }
 
     public T cache(T object) {
         Method[] methods = object.getClass().getMethods();
 
         for (Method method : methods) {
             if (method.isAnnotationPresent(Cache.class)) {
-                /*
-                System.out.print("Method \'" + method.getName() + "\' ");
-                Cache cache = method.getAnnotation(Cache.class);
-                CacheType cacheType = cache.cacheType();
-                switch (cacheType) {
-                    case IN_FILE:
-                        System.out.println("Cached in file " + cache.fileNamePrefix() + (cache.zip() ? ".zip" : ".dat"));
-                        break;
-                    case IN_MEMORY:
-                        System.out.println("Cached in memory ");
-                        break;
-                    case IN_DATABASE:
-                        System.out.println("Cached in data base ");
-                        break;
-                }
-                System.out.println("Goto invoke");
-                */
+                this.delegate = object;
                 Object o = Proxy.newProxyInstance(getSystemClassLoader(),
                         object.getClass().getInterfaces(),
-                        new CacheProxy<T>(object));
+                        new CacheProxy<T>(object, directoryToSaveFile));
                 return (T) o;
             }
         }
@@ -95,7 +61,8 @@ public class CacheProxy<T extends Serializable> implements InvocationHandler {
             return invoke(delegateMethod, args);
         }
         Cache cache = delegateMethod.getAnnotation(Cache.class);
-        List<Class<?>> identityByClass = Arrays.asList(cache.identityBy());
+
+        List<Class> identityByClass = Arrays.asList(cache.identityBy());
         if (identityByClass.size() != 0) {
             List<Object> list = new ArrayList<>();
             for (Object arg : args) {
@@ -107,84 +74,203 @@ public class CacheProxy<T extends Serializable> implements InvocationHandler {
         } else {
             argsKey = args;
         }
-        String fileName = (cache.fileNamePrefix().length() == 0) ? delegateMethod.getName() : cache.fileNamePrefix();
 
+        String fileName = (cache.fileNamePrefix() + delegateMethod.getName() + key(delegateMethod, argsKey)).replace(".", "_");
+
+        Object result;
         if (cache.cacheType().equals(CacheType.IN_FILE)) {
-            readFile(fileName, cache.zip());
+            try {
+                result = readFile(fileName, cache.zip());
+                if (result == null) {
+                    throw new FileNotFoundException();
+                }
+            } catch (FileNotFoundException e) {
+                result = invoke(delegateMethod, args);
+                result = getObjectAndCheckInstanceList(cache, result);
+                saveFile(result, fileName, cache.zip());
+            }
+        } else {
+            if (!resultByArg.containsKey(key(delegateMethod, argsKey))) {
+                result = invoke(delegateMethod, args);
+                result = getObjectAndCheckInstanceList(cache, result);
+                resultByArg.put(key(delegateMethod, argsKey), result);
+            } else {
+                result = resultByArg.get(key(delegateMethod, argsKey));
+            }
         }
 
-        if (!resultByArg.containsKey(key(delegateMethod, argsKey))) {
-            Object result = invoke(delegateMethod, args);
-            if (result instanceof List<?>) {
-                List list = (List) result;
-                result = list.subList(0, cache.maxListList());
-            }
-            resultByArg.put(key(delegateMethod, argsKey), result);
-            if (cache.cacheType().equals(CacheType.IN_FILE)) {
-                saveFile(fileName, cache.zip());
-            }
-        }
-
-        return resultByArg.get(key(delegateMethod, argsKey));
+        return result;
     }
 
-    private void saveFile(String fileName, boolean zip) {
+    private Object getObjectAndCheckInstanceList(Cache cache, Object result) {
+        result = (result instanceof List<?>) ? new ArrayList<>(((List) result).subList(0, cache.maxListList())) : result;
+        return result;
+    }
+
+    private void saveFile(Object object, String fileName, boolean zip) {
+
+        entryDirectoy();
 
         if (zip) {
 
+            File f = new File(directoryToSaveFile + fileName + ".zip");
+            ZipOutputStream out = null;
+            try {
+                out = new ZipOutputStream(new FileOutputStream(f));
+                ZipEntry entry = new ZipEntry(fileName + extensionFile);
+                out.putNextEntry(entry);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            byte[] data = new byte[0];
+            try {
+                data = converToByte(object);
+            } catch (IOException e) {
+                throw new RuntimeException("Exception conver Object to byte[]", e);
+            }
+            try {
+                out.write(data, 0, data.length);
+                out.closeEntry();
+
+                out.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
         } else {
+
             File file = new File(directoryToSaveFile + fileName + extensionFile);
-            FileOutputStream fileOutputStream = null; //-=-=-==-=-
+            FileOutputStream fileOutputStream;
             try {
                 fileOutputStream = new FileOutputStream(file);
-            } catch (FileNotFoundException e) {
-                e.printStackTrace();
-            }
-            ObjectOutputStream objectOutputStream = null; // -=-=-=-==-=
-            try {
-                objectOutputStream = new ObjectOutputStream(fileOutputStream);
-                objectOutputStream.writeObject(resultByArg);
+                ObjectOutputStream objectOutputStream = new ObjectOutputStream(fileOutputStream);
+                objectOutputStream.writeObject(object);
                 objectOutputStream.close();
+            } catch (FileNotFoundException e) {
+                e.printStackTrace(); // TODO: 21.08.16
             } catch (IOException e) {
-                e.printStackTrace();
+                e.printStackTrace(); // TODO: 21.08.16
             }
 
         }
     }
 
-    private void readFile(String fileName, boolean zip) {
+    private byte[] converToByte(Object object) throws IOException {
+        try (ByteArrayOutputStream bos = new ByteArrayOutputStream();
+             ObjectOutput output = new ObjectOutputStream(bos)) {
+            output.writeObject(object);
+            return bos.toByteArray();
+        }
+    }
+
+    private Object convertFromBytes(byte[] bytes) throws IOException, ClassNotFoundException {
+        try (ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
+             ObjectInput input = new ObjectInputStream(bis)) {
+            return input.readObject();
+        }
+    }
+
+    private void entryDirectoy() {
+        if (!Files.isDirectory(Paths.get(directoryToSaveFile))) {
+            try {
+                new File(directoryToSaveFile).mkdir();
+            } catch (Exception e) {
+                new RuntimeException("Error create directory : " + directoryToSaveFile, e);
+            }
+        }
+    }
+
+    private Object readFile(String fileName, boolean zip) throws IOException {
 
         if (zip) {
+            ZipFile zipFile = null;
+            try {
+                zipFile = new ZipFile(directoryToSaveFile + fileName + ".zip");
+            } catch (IOException e) {
+                throw new FileNotFoundException();
+            }
+
+            try {
+                final Enumeration<? extends ZipEntry> entries = zipFile.entries();
+                while (entries.hasMoreElements()) {
+                    final ZipEntry entry = entries.nextElement();
+                    extractEntry(entry, zipFile.getInputStream(entry));
+                }
+            } catch (IOException e) {
+                e.printStackTrace();   // TODO: 22.08.16  
+            } finally {
+                try {
+                    zipFile.close();
+                } catch (IOException e) {
+                    e.printStackTrace(); // TODO: 22.08.16
+                }
+            }
+
+
+            Object result = readFileNotZipArchive(fileName);
+            deleteFile(fileName);
+            return result;
 
         } else {
-            File file = new File(directoryToSaveFile + fileName + extensionFile);
-            FileInputStream fileInputStream = null;
-            try {
-                fileInputStream = new FileInputStream(file);
-            } catch (FileNotFoundException e) {
-                return;
-            }
-            ObjectInputStream objectInputStream = null;
-            CacheProxyMap<Object, Object> fileObj = null;
-            try {
-                objectInputStream = new ObjectInputStream(fileInputStream);
-                fileObj = (CacheProxyMap<Object, Object>) objectInputStream.readObject();
-                objectInputStream.close();
-            } catch (IOException e) {
-                throw new RuntimeException("Object input stream exception file name :" + file.toString());
-            } catch (ClassNotFoundException e) {
-                throw new RuntimeException("Class not found exception from read object in file name :" + file.toString());
-            }
-
-            for (Map.Entry<Object, Object> entry : fileObj.entrySet()) {
-                resultByArg.put(entry.getKey(), entry.getValue());
-            }
-
+            return readFileNotZipArchive(fileName);
         }
 
     }
 
-    private Object key(Method method, Object[] args) {
+    private void deleteFile(String fileName) {
+        try {
+            Files.delete(Paths.get(directoryToSaveFile + fileName + extensionFile));
+        } catch (IOException e) {
+            e.printStackTrace(); // TODO: 22.08.16
+        }
+    }
+
+    private Object readFileNotZipArchive(String fileName) throws FileNotFoundException {
+        File file = new File(directoryToSaveFile + fileName + extensionFile);
+        FileInputStream fileInputStream;
+        try {
+            fileInputStream = new FileInputStream(file);
+        } catch (FileNotFoundException e) {
+            throw new FileNotFoundException();
+        }
+        ObjectInputStream objectInputStream;
+        Object fileObj;
+        try {
+            objectInputStream = new ObjectInputStream(fileInputStream);
+            fileObj = (Object) objectInputStream.readObject();
+            objectInputStream.close();
+        } catch (IOException e) {
+            throw new RuntimeException("Object input stream exception file name :" + file.toString());
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Class not found exception from read object in file name :" + file.toString());
+        }
+
+        return fileObj;
+    }
+
+    private void extractEntry(final ZipEntry entry, InputStream is) throws IOException {
+        String exractedFile = directoryToSaveFile + entry.getName();
+        FileOutputStream fos = null;
+
+        try {
+            fos = new FileOutputStream(exractedFile);
+            final byte[] buf = new byte[2048];
+            int read = 0;
+            int length;
+
+            while ((length = is.read(buf, 0, buf.length)) >= 0) {
+                fos.write(buf, 0, length);
+            }
+
+        } catch (IOException ioex) {
+            fos.close();
+        }
+
+    }
+
+
+    private String key(Method method, Object[] args) {
 
         String key = method.getName();
         for (Object arg : args) {
