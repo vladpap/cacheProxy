@@ -93,7 +93,6 @@ public class FilesForCache {
         if (zip) {
             readFileInZipArchive(fileName);
 
-
             Object result = readFileNotZipArchive(fileName);
             deleteFile(fileName);
             return result;

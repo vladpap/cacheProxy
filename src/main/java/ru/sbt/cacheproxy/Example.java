@@ -1,13 +1,12 @@
-package ru.sbt;
+package ru.sbt.cacheproxy;
 
-import ru.sbt.cacheproxy.CacheProxy;
 import ru.sbt.service.ServiceImpl;
 import ru.sbt.service.Service;
 import ru.sbt.service.Utils;
 import ru.sbt.service.UtilsImpl;
 
 
-public class Main {
+public class Example {
     public static void main(String[] args) {
         CacheProxy cacheProxy = new CacheProxy();
         Service service = cacheProxy.cache(new ServiceImpl());

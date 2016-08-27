@@ -18,10 +18,9 @@ public class CacheProxyTest {
     public void dependencyIsNotCalled() {
 
         CacheProxy cacheProxy = new CacheProxy();
-        final Service service = /*cacheProxy.cache*/(new ServiceImpl());
-//        Service serviceTest = mock(ServiceImpl.class);
-        verify(serviceTest, never()).doHardWork("sdfsf", 34);
+        final Service service = cacheProxy.cache(serviceTest);
+        verify(service, never()).doHardWork("sdfsf", 34);
         service.doHardWork("sdfsf", 34);
+        verify(serviceTest, times(1)).doHardWork("sdfsf", 34);
     }
-
 }

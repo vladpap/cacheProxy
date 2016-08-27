@@ -19,4 +19,3 @@ public @interface Cache {
 
     int maxListList() default 100_000;
 }
-
