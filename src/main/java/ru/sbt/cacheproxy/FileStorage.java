@@ -6,6 +6,7 @@ import java.nio.file.Paths;
 import java.util.Enumeration;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import java.util.zip.ZipOutputStream;
 
 public class FileStorage<T> implements StorageCache<T> {
     private static final String EXTENSION_FILE = ".cache";
@@ -20,7 +21,7 @@ public class FileStorage<T> implements StorageCache<T> {
     }
 
     @Override
-    public Object readFromStorage(T keyCached, boolean isArchived) {
+    public Object readFromStorage(T keyCached, boolean isArchived) throws FileNotFoundException {
         String fileName = keyCached.toString();
         if (isArchived) readFileInZipArchive(fileName);
 
@@ -32,7 +33,64 @@ public class FileStorage<T> implements StorageCache<T> {
     @Override
     public void writeInStorage(Object object, T keyCached, boolean isArchived) {
         String fileName = keyCached.toString();
+        presentDirecory();
+        if (isArchived) {
+            saveFileInZipAchive(object, fileName);
+        } else {
 
+            saveFileWithoutArchive(object, fileName);
+        }
+    }
+
+    private void saveFileWithoutArchive(Object object, String fileName) {
+        File file = new File(directoryToSave + fileName + EXTENSION_FILE);
+        try (FileOutputStream fileOutputStream = new FileOutputStream(file)) {
+            ObjectOutputStream objectOutputStream = new ObjectOutputStream(fileOutputStream);
+            objectOutputStream.writeObject(object);
+        } catch (IOException e) {
+            throw new RuntimeException("Error save file: " + directoryToSave + fileName + EXTENSION_FILE, e);
+        }
+    }
+
+    private void saveFileInZipAchive(Object object, String fileName) {
+        ZipOutputStream out = null;
+        try (File f = new File(directoryToSave + fileName + ".zip")) {
+            out = new ZipOutputStream(new FileOutputStream(f));
+            ZipEntry entry = new ZipEntry(fileName + EXTENSION_FILE);
+            out.putNextEntry(entry);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        byte[] data;
+        try {
+            data = converToByte(object);
+        } catch (IOException e) {
+            throw new RuntimeException("Exception conver Object to byte[]", e);
+        }
+        try {
+            out.write(data, 0, data.length);
+        } catch (IOException e) {
+            throw new RuntimeException("Error save archive file: " + directoryToSave + fileName + ".zip");
+        }
+    }
+
+    private byte[] converToByte(Object object) throws IOException {
+        try (ByteArrayOutputStream bos = new ByteArrayOutputStream();
+             ObjectOutput output = new ObjectOutputStream(bos)) {
+            output.writeObject(object);
+            return bos.toByteArray();
+        }
+    }
+
+    private void presentDirecory() {
+        if (!Files.isDirectory(Paths.get(directoryToSave))) {
+            try {
+                new File(directoryToSave).mkdir();
+            } catch (Exception e) {
+                new RuntimeException("Error create directory : " + directoryToSave, e);
+            }
+        }
     }
 
     private void deleteFile(String fileName) {
@@ -43,13 +101,12 @@ public class FileStorage<T> implements StorageCache<T> {
         }
     }
 
-    private Object readFileNotZipArchive(String fileName) {
-        File file = new File(directoryToSave + fileName + EXTENSION_FILE);
+    private Object readFileNotZipArchive(String fileName) throws FileNotFoundException {
         FileInputStream fileInputStream;
-        try {
+        try (File file = new File(directoryToSave + fileName + EXTENSION_FILE)) {
             fileInputStream = new FileInputStream(file);
         } catch (FileNotFoundException e) {
-            throw new FileNotFoundException(e);
+            throw new FileNotFoundException("File not found :" + directoryToSave + fileName + EXTENSION_FILE);
         }
         ObjectInputStream objectInputStream;
         Object fileObj;

@@ -101,14 +101,13 @@ public class CacheProxy implements InvocationHandler {
     }
 
     private Object getResultCacheFromFile(Object[] args, Method delegateMethod, Cache cache, String fileName) throws Throwable {
-        FilesForCache filesForCache = new FilesForCache(directoryToSaveFile);
         Object result;
         try {
             result = storageInFile.readFromStorage(fileName, cache.zip());
         } catch (FileNotFoundException e) {
             result = invoke(delegateMethod, args);
             result = getObjectAndCheckInstanceList(cache, result);
-            filesForCache.saveFile(result, fileName, cache.zip());
+            storageInFile.writeInStorage(result, fileName, cache.zip());
         }
         return result;
     }
